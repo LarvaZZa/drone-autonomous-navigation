@@ -4,19 +4,43 @@ import android.app.Activity;
 import android.content.Context;
 import android.graphics.Point;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.SystemClock;
 import android.view.Display;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.view.animation.Animation;
 import android.view.animation.Transformation;
+import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.RelativeLayout;
+import android.widget.Toast;
+
+import androidx.annotation.NonNull;
 
 import com.dji.mapkit.core.maps.DJIMap;
 
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+
+import dji.common.error.DJIError;
+import dji.common.flightcontroller.LocationCoordinate3D;
+import dji.common.flightcontroller.virtualstick.FlightControlData;
+import dji.common.flightcontroller.virtualstick.FlightCoordinateSystem;
+import dji.common.flightcontroller.virtualstick.RollPitchControlMode;
+import dji.common.flightcontroller.virtualstick.VerticalControlMode;
+import dji.common.flightcontroller.virtualstick.YawControlMode;
+import dji.common.remotecontroller.HardwareState;
+import dji.common.util.CommonCallbacks;
 import dji.keysdk.CameraKey;
 import dji.keysdk.KeyManager;
+import dji.sdk.flightcontroller.FlightController;
+import dji.sdk.products.Aircraft;
+import dji.sdk.remotecontroller.RemoteController;
+import dji.sdk.sdkmanager.DJISDKManager;
 import dji.ux.panel.CameraSettingAdvancedPanel;
 import dji.ux.panel.CameraSettingExposurePanel;
 import dji.ux.utils.DJIProductUtil;
@@ -37,7 +61,7 @@ import dji.ux.widget.controls.LensControlWidget;
 /**
  * Activity that shows all the UI elements together
  */
-public class CompleteWidgetActivity extends Activity {
+public class CompleteWidgetActivity extends Activity implements View.OnClickListener{
 
     private MapWidget mapWidget;
     private ViewGroup parentView;
@@ -67,6 +91,22 @@ public class CompleteWidgetActivity extends Activity {
     private int margin;
     private int deviceWidth;
     private int deviceHeight;
+
+
+    private Button startBtn;
+    private Button stopBtn;
+    private FlightController flightController;
+    private RemoteController remoteController;
+    private ScheduledExecutorService scheduleTaskExecutor;
+    private float pitch = 0;
+    private float roll = 0;
+    private float yaw = 0;
+    private float verticalThrottle = 1;
+    private double bearing;
+    private boolean altitudeAndDirectionComplete = false;
+
+    //DON'T FORGET TO ADJUST
+    private LocationCoordinate3D targetLocation = new LocationCoordinate3D(0.5, 0.5, 3);
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -99,8 +139,158 @@ public class CompleteWidgetActivity extends Activity {
         secondaryFPVWidget = findViewById(R.id.secondary_fpv_widget);
         secondaryFPVWidget.setOnClickListener(view -> swapVideoSource());
 
+        startBtn = (Button) parentView.findViewById(R.id.start_button);
+        startBtn.setOnClickListener(this);
+        stopBtn = (Button) parentView.findViewById(R.id.stop_button);
+        stopBtn.setOnClickListener(this);
+        flightController = ((Aircraft) DJISDKManager.getInstance().getProduct()).getFlightController();
+        remoteController = ((Aircraft)DJISDKManager.getInstance().getProduct()).getRemoteController();
+
         fpvWidget.setCameraIndexListener((cameraIndex, lensIndex) -> cameraWidgetKeyIndexUpdated(fpvWidget.getCameraKeyIndex(), fpvWidget.getLensKeyIndex()));
         updateSecondaryVideoVisibility();
+    }
+
+
+    @Override
+    public void onClick(View view) {
+        switch (view.getId()) {
+            case R.id.start_button:
+                scheduleTaskExecutor = Executors.newScheduledThreadPool(2);
+                enableVirtualSticks();
+                LocationCoordinate3D droneCurrentLocation = new LocationCoordinate3D(flightController.getState().getAircraftLocation().getLatitude(),
+                        flightController.getState().getAircraftLocation().getLongitude(),
+                        flightController.getState().getAircraftLocation().getAltitude());
+                bearing = bearing(droneCurrentLocation, targetLocation);
+                startCalculations();
+                break;
+            case R.id.stop_button:
+                stopVirtualSticks();
+                break;
+        }
+    }
+
+    private void startCalculations() {
+        scheduleTaskExecutor.scheduleAtFixedRate(this::calculations, 0, 500, TimeUnit.MILLISECONDS);
+    }
+
+
+    private void calculations() {
+        LocationCoordinate3D droneCurrentLocation = new LocationCoordinate3D(flightController.getState().getAircraftLocation().getLatitude(),
+                flightController.getState().getAircraftLocation().getLongitude(),
+                flightController.getState().getAircraftLocation().getAltitude());
+
+        if(Math.abs(droneCurrentLocation.getAltitude()-targetLocation.getAltitude()) > 0.15){
+            verticalThrottle = targetLocation.getAltitude();
+            yaw = (float) bearing;
+        } else if (Math.abs(flightController.getState().getAttitude().yaw - bearing)>1) {
+            verticalThrottle = targetLocation.getAltitude();
+            yaw = (float) bearing;
+        } else if (Math.abs(flightController.getState().getAttitude().yaw - bearing)<=1 || altitudeAndDirectionComplete) {
+            altitudeAndDirectionComplete = true;
+            double distance = distance(droneCurrentLocation, targetLocation);
+            if (distance>5){
+                roll = 3;
+            } else if (5 >= distance && distance > 1){
+                roll = 1;
+            } else {
+                roll = 0;
+                stopVirtualSticks();
+            }
+        }
+    }
+
+    private void stopVirtualSticks(){
+        scheduleTaskExecutor.shutdown();
+        flightController.setVirtualStickModeEnabled(false,djiError -> {
+            if(djiError != null) {
+                showToast(djiError.getDescription());
+            }
+        });
+    }
+
+    private void startUploadVirtualSticksData() {
+        scheduleTaskExecutor.scheduleAtFixedRate(this::uploadVSData, 0, 60, TimeUnit.MILLISECONDS);
+    }
+
+    private void uploadVSData(){
+        flightController.sendVirtualStickFlightControlData(new FlightControlData(roll, pitch, yaw, verticalThrottle), djiError -> {
+            if (djiError != null) {
+                showToast(djiError.getDescription());
+            }
+        });
+    }
+
+    private void enableVirtualSticks() {
+        flightController.setVirtualStickModeEnabled(true, djiError -> {
+            if(djiError == null){
+                flightController.setVirtualStickAdvancedModeEnabled(true);
+                flightController.setRollPitchControlMode(RollPitchControlMode.VELOCITY);
+                flightController.setYawControlMode(YawControlMode.ANGLE);
+                flightController.setVerticalControlMode(VerticalControlMode.POSITION);
+                flightController.setRollPitchCoordinateSystem(FlightCoordinateSystem.BODY);
+                startUploadVirtualSticksData();
+            } else {
+                showToast(djiError.getDescription());
+            }
+        });
+    }
+
+    private static double bearing(LocationCoordinate3D current, LocationCoordinate3D target) {
+        double lat1 = current.getLatitude();
+        double lon1 = current.getLongitude();
+        double lat2 = target.getLatitude();
+        double lon2 = target.getLongitude();
+        double d, tc1, sn;
+        double latAlt, lonAlt, latNeu, lonNeu;
+
+        latAlt = lat1 * Math.PI / 180;
+        lonAlt = -lon1 * Math.PI / 180;
+        latNeu = lat2 * Math.PI / 180;
+        lonNeu = -lon2 * Math.PI / 180;
+
+        d = 2 * Math.asin(Math.sqrt(Math.pow((Math.sin((latAlt-latNeu)/2)),2)+ Math.cos(latAlt)*Math.cos(latNeu)*Math.pow((Math.sin((lonAlt-lonNeu)/2)),2)));
+
+        sn = Math.sin(lonNeu-lonAlt);
+        double acos = Math.acos((Math.sin(latNeu) - Math.sin(latAlt) * Math.cos(d)) / (Math.sin(d) * Math.cos(latAlt)));
+        if(sn < 0){
+            tc1= acos;
+        } else {
+            tc1=2*Math.PI - acos;
+        }
+
+        return tc1*180 / Math.PI;
+    }
+
+    public static double distance(LocationCoordinate3D current, LocationCoordinate3D target) {
+
+        double lat1 = current.getLatitude();
+        double lon1 = current.getLongitude();
+        double el1 = current.getAltitude();
+        double lat2 = target.getLatitude();
+        double lon2 = target.getLongitude();
+        double el2 = target.getAltitude();
+
+        final int R = 6371; // Radius of the earth
+
+        double latDistance = Math.toRadians(lat2 - lat1);
+        double lonDistance = Math.toRadians(lon2 - lon1);
+        double a = Math.sin(latDistance / 2) * Math.sin(latDistance / 2)
+                + Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2))
+                * Math.sin(lonDistance / 2) * Math.sin(lonDistance / 2);
+        double c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        double distance = R * c * 1000; // convert to meters
+
+        double height = el1 - el2;
+
+        distance = Math.pow(distance, 2) + Math.pow(height, 2);
+
+        return Math.sqrt(distance);
+    }
+
+    public void showToast(final String message) {
+        Handler handler = new Handler(Looper.getMainLooper());
+
+        handler.post(() -> Toast.makeText(getApplicationContext(), message, Toast.LENGTH_LONG).show());
     }
 
     private void initCameraView() {

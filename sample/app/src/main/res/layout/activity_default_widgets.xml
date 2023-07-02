@@ -172,6 +172,22 @@
         android:layout_alignParentBottom="true"/>
 
     <!-- Everything below this line will appear on top of the full-screen map widget -->
+    <Button
+        android:id="@+id/start_button"
+        android:layout_width="wrap_content"
+        android:layout_height="60dp"
+        android:layout_marginLeft="10dp"
+        android:layout_marginTop="50dp"
+        android:text="start" />
+
+    <Button
+        android:id="@+id/stop_button"
+        android:layout_width="wrap_content"
+        android:layout_height="60dp"
+        android:layout_marginLeft="10dp"
+        android:layout_marginTop="10dp"
+        android:layout_below="@+id/start_button"
+        android:text="stop" />
 
     <dji.ux.widget.controls.CameraControlsWidget
         android:id="@+id/CameraCapturePanel"
