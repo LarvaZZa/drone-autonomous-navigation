@@ -187,7 +187,7 @@ public class CompleteWidgetActivity extends Activity implements View.OnClickList
         } else if (distance>50){
             yaw = (float) bearing;
             roll = 5;
-        } else if (distance<=50 && distance>2) {
+        } else if (distance<=50 && distance>3) {
             yaw = (float) bearing;
             roll = 2;
         } else {
