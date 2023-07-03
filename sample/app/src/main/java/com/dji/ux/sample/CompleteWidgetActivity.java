@@ -6,7 +6,6 @@ import android.graphics.Point;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
-import android.os.SystemClock;
 import android.view.Display;
 import android.view.View;
 import android.view.ViewGroup;
@@ -18,23 +17,18 @@ import android.widget.FrameLayout;
 import android.widget.RelativeLayout;
 import android.widget.Toast;
 
-import androidx.annotation.NonNull;
-
 import com.dji.mapkit.core.maps.DJIMap;
 
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
-import dji.common.error.DJIError;
 import dji.common.flightcontroller.LocationCoordinate3D;
 import dji.common.flightcontroller.virtualstick.FlightControlData;
 import dji.common.flightcontroller.virtualstick.FlightCoordinateSystem;
 import dji.common.flightcontroller.virtualstick.RollPitchControlMode;
 import dji.common.flightcontroller.virtualstick.VerticalControlMode;
 import dji.common.flightcontroller.virtualstick.YawControlMode;
-import dji.common.remotecontroller.HardwareState;
-import dji.common.util.CommonCallbacks;
 import dji.keysdk.CameraKey;
 import dji.keysdk.KeyManager;
 import dji.sdk.flightcontroller.FlightController;
@@ -93,20 +87,18 @@ public class CompleteWidgetActivity extends Activity implements View.OnClickList
     private int deviceHeight;
 
 
-    private Button startBtn;
+    private Button startVSBtn;
     private Button stopBtn;
+    private Button calcBtn;
     private FlightController flightController;
-    private RemoteController remoteController;
     private ScheduledExecutorService scheduleTaskExecutor;
     private float pitch = 0;
     private float roll = 0;
     private float yaw = 0;
     private float verticalThrottle = 1;
-    private double bearing;
-    private boolean altitudeAndDirectionComplete = false;
 
     //DON'T FORGET TO ADJUST
-    private LocationCoordinate3D targetLocation = new LocationCoordinate3D(0.5, 0.5, 3);
+    private LocationCoordinate3D targetLocation = new LocationCoordinate3D(52.240421, 6.849494, 3f);
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -139,12 +131,13 @@ public class CompleteWidgetActivity extends Activity implements View.OnClickList
         secondaryFPVWidget = findViewById(R.id.secondary_fpv_widget);
         secondaryFPVWidget.setOnClickListener(view -> swapVideoSource());
 
-        startBtn = (Button) parentView.findViewById(R.id.start_button);
-        startBtn.setOnClickListener(this);
+        startVSBtn = (Button) parentView.findViewById(R.id.virtual_sticks_button);
+        startVSBtn.setOnClickListener(this);
         stopBtn = (Button) parentView.findViewById(R.id.stop_button);
         stopBtn.setOnClickListener(this);
+        calcBtn = (Button) parentView.findViewById(R.id.start_calculations_button);
+        calcBtn.setOnClickListener(this);
         flightController = ((Aircraft) DJISDKManager.getInstance().getProduct()).getFlightController();
-        remoteController = ((Aircraft)DJISDKManager.getInstance().getProduct()).getRemoteController();
 
         fpvWidget.setCameraIndexListener((cameraIndex, lensIndex) -> cameraWidgetKeyIndexUpdated(fpvWidget.getCameraKeyIndex(), fpvWidget.getLensKeyIndex()));
         updateSecondaryVideoVisibility();
@@ -154,23 +147,24 @@ public class CompleteWidgetActivity extends Activity implements View.OnClickList
     @Override
     public void onClick(View view) {
         switch (view.getId()) {
-            case R.id.start_button:
-                scheduleTaskExecutor = Executors.newScheduledThreadPool(2);
+            case R.id.virtual_sticks_button:
                 enableVirtualSticks();
-                LocationCoordinate3D droneCurrentLocation = new LocationCoordinate3D(flightController.getState().getAircraftLocation().getLatitude(),
-                        flightController.getState().getAircraftLocation().getLongitude(),
-                        flightController.getState().getAircraftLocation().getAltitude());
-                bearing = bearing(droneCurrentLocation, targetLocation);
-                startCalculations();
                 break;
             case R.id.stop_button:
                 stopVirtualSticks();
+                break;
+            case R.id.start_calculations_button:
+                verticalThrottle = targetLocation.getAltitude();
+
+                scheduleTaskExecutor = Executors.newScheduledThreadPool(2);
+                startCalculations();
+                startUploadVirtualSticksData();
                 break;
         }
     }
 
     private void startCalculations() {
-        scheduleTaskExecutor.scheduleAtFixedRate(this::calculations, 0, 500, TimeUnit.MILLISECONDS);
+        scheduleTaskExecutor.scheduleAtFixedRate(this::calculations, 0, 800, TimeUnit.MILLISECONDS);
     }
 
 
@@ -179,31 +173,37 @@ public class CompleteWidgetActivity extends Activity implements View.OnClickList
                 flightController.getState().getAircraftLocation().getLongitude(),
                 flightController.getState().getAircraftLocation().getAltitude());
 
-        if(Math.abs(droneCurrentLocation.getAltitude()-targetLocation.getAltitude()) > 0.15){
-            verticalThrottle = targetLocation.getAltitude();
+        double bearing = bearing(droneCurrentLocation, targetLocation);
+        double distance = distance(droneCurrentLocation, targetLocation);
+        double VSAltitudeDifference = Math.abs(Math.round(droneCurrentLocation.getAltitude())-targetLocation.getAltitude());
+
+        if(VSAltitudeDifference>0.5){
             yaw = (float) bearing;
-        } else if (Math.abs(flightController.getState().getAttitude().yaw - bearing)>1) {
-            verticalThrottle = targetLocation.getAltitude();
+        } else if (Math.abs(flightController.getState().getAttitude().yaw-bearing)>5){
             yaw = (float) bearing;
-        } else if (Math.abs(flightController.getState().getAttitude().yaw - bearing)<=1 || altitudeAndDirectionComplete) {
-            altitudeAndDirectionComplete = true;
-            double distance = distance(droneCurrentLocation, targetLocation);
-            if (distance>5){
-                roll = 3;
-            } else if (5 >= distance && distance > 1){
-                roll = 1;
-            } else {
-                roll = 0;
-                stopVirtualSticks();
-            }
+        } else if (distance>50){
+            yaw = (float) bearing;
+            roll = 5;
+        } else if (distance<=50 && distance>1) {
+            yaw = (float) bearing;
+            roll = 2;
+        } else {
+            yaw = 0;
+            roll = 0;
+            stopVirtualSticks();
         }
     }
 
     private void stopVirtualSticks(){
-        scheduleTaskExecutor.shutdown();
+        if(scheduleTaskExecutor != null){
+            scheduleTaskExecutor.shutdown();
+            scheduleTaskExecutor = null;
+        }
         flightController.setVirtualStickModeEnabled(false,djiError -> {
             if(djiError != null) {
-                showToast(djiError.getDescription());
+                showToast("Stopping VS error:" + djiError.getDescription());
+            } else {
+                showToast("VS Stopped!");
             }
         });
     }
@@ -228,9 +228,9 @@ public class CompleteWidgetActivity extends Activity implements View.OnClickList
                 flightController.setYawControlMode(YawControlMode.ANGLE);
                 flightController.setVerticalControlMode(VerticalControlMode.POSITION);
                 flightController.setRollPitchCoordinateSystem(FlightCoordinateSystem.BODY);
-                startUploadVirtualSticksData();
+                showToast("VS Sticks Enabled!");
             } else {
-                showToast(djiError.getDescription());
+                showToast("VS Sticks Enable error: " + djiError.getDescription());
             }
         });
     }
