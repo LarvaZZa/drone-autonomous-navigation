@@ -155,7 +155,6 @@ public class CompleteWidgetActivity extends Activity implements View.OnClickList
                 break;
             case R.id.start_calculations_button:
                 verticalThrottle = targetLocation.getAltitude();
-
                 scheduleTaskExecutor = Executors.newScheduledThreadPool(2);
                 startCalculations();
                 startUploadVirtualSticksData();
@@ -188,7 +187,7 @@ public class CompleteWidgetActivity extends Activity implements View.OnClickList
         } else if (distance>50){
             yaw = (float) bearing;
             roll = 5;
-        } else if (distance<=50 && distance>1) {
+        } else if (distance<=50 && distance>2) {
             yaw = (float) bearing;
             roll = 2;
         } else {
