@@ -174,6 +174,10 @@ public class CompleteWidgetActivity extends Activity implements View.OnClickList
                 flightController.getState().getAircraftLocation().getAltitude());
 
         double bearing = bearing(droneCurrentLocation, targetLocation);
+        if(bearing > 180) {
+            bearing = -360 + bearing;
+        }
+
         double distance = distance(droneCurrentLocation, targetLocation);
         double VSAltitudeDifference = Math.abs(Math.round(droneCurrentLocation.getAltitude())-targetLocation.getAltitude());
 
@@ -213,7 +217,7 @@ public class CompleteWidgetActivity extends Activity implements View.OnClickList
     }
 
     private void uploadVSData(){
-        flightController.sendVirtualStickFlightControlData(new FlightControlData(roll, pitch, yaw, verticalThrottle), djiError -> {
+        flightController.sendVirtualStickFlightControlData(new FlightControlData(pitch, roll, yaw, verticalThrottle), djiError -> {
             if (djiError != null) {
                 showToast(djiError.getDescription());
             }
