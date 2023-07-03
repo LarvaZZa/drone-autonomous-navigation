@@ -15,10 +15,10 @@ If you want to execute the autonomous behaviour on the drone, you must:
 - ***IMPORTANT:*** set the latitude, longitude and altitude of the target location you want the drone to visit before installing the application on the phone!
 - Install the application on your Android phone;
 - Connect the phone to the drone remote controller;
-- Turn on the drone and the remote cotnroller;
-- Launch the applicaiton;
+- Turn on the drone and the remote controller;
+- Launch the application;
 - Click on "Complete Demo of Default UI Widgets" button;
 - Click on "ENABLE VS" button to enable the Virtual Sticks that will control teh drone. **Note:** You will NOT be able to control the drone with the remote controller unless you press the "STOP" button.
-- Click on "START MISSION" button to start the drone's autonomus behaviour towards the target location. **Note:** You will NOT be able to control the drone with the remote controller unless you press the "STOP" button.
+- Click on "START MISSION" button to start the drone's autonomous behaviour towards the target location. **Note:** You will NOT be able to control the drone with the remote controller unless you press the "STOP" button.
 
 ***ATTENTION*** - In case of emergencies (if the drone does not behave how you want it to), press the "STOP" button to halt the drone's behaviour and take over the controls via the remote controller. 
