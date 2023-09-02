@@ -78,26 +78,25 @@ public class CompleteWidgetActivity extends Activity implements View.OnClickList
     private CameraControlsWidget controlsWidget;
     private LensControlWidget lensControlWidget;
     private ThermalPaletteWidget thermalPaletteWidget;
-
-
     private int height;
     private int width;
     private int margin;
     private int deviceWidth;
     private int deviceHeight;
 
-
     private Button startVSBtn;
     private Button stopBtn;
     private Button calcBtn;
     private FlightController flightController;
     private ScheduledExecutorService scheduleTaskExecutor;
+
+    //DRONE CONTROLS
     private float pitch = 0;
     private float roll = 0;
     private float yaw = 0;
     private float verticalThrottle = 1;
 
-    //DON'T FORGET TO ADJUST
+    //!DON'T FORGET TO CHANGE WHEN NECESSARY!
     private LocationCoordinate3D targetLocation = new LocationCoordinate3D(52.240421, 6.849494, 3f);
 
     @Override
@@ -108,21 +107,17 @@ public class CompleteWidgetActivity extends Activity implements View.OnClickList
         height = DensityUtil.dip2px(this, 100);
         width = DensityUtil.dip2px(this, 150);
         margin = DensityUtil.dip2px(this, 12);
-
         WindowManager windowManager = (WindowManager) getSystemService(Context.WINDOW_SERVICE);
         final Display display = windowManager.getDefaultDisplay();
         Point outPoint = new Point();
         display.getRealSize(outPoint);
         deviceHeight = outPoint.y;
         deviceWidth = outPoint.x;
-
         mapWidget = (MapWidget) findViewById(R.id.map_widget);
         mapWidget.initAMap(map -> map.setOnMapClickListener((DJIMap.OnMapClickListener) latLng -> onViewClick(mapWidget)));
         mapWidget.onCreate(savedInstanceState);
-
         initCameraView();
         parentView = (ViewGroup) findViewById(R.id.root_view);
-
         fpvWidget = findViewById(R.id.fpv_widget);
         fpvWidget.setOnClickListener(view -> onViewClick(fpvWidget));
         fpvOverlayWidget = findViewById(R.id.fpv_overlay_widget);
@@ -130,17 +125,24 @@ public class CompleteWidgetActivity extends Activity implements View.OnClickList
         secondaryVideoView = findViewById(R.id.secondary_video_view);
         secondaryFPVWidget = findViewById(R.id.secondary_fpv_widget);
         secondaryFPVWidget.setOnClickListener(view -> swapVideoSource());
-
-        startVSBtn = (Button) parentView.findViewById(R.id.virtual_sticks_button);
-        startVSBtn.setOnClickListener(this);
-        stopBtn = (Button) parentView.findViewById(R.id.stop_button);
-        stopBtn.setOnClickListener(this);
-        calcBtn = (Button) parentView.findViewById(R.id.start_calculations_button);
-        calcBtn.setOnClickListener(this);
-        flightController = ((Aircraft) DJISDKManager.getInstance().getProduct()).getFlightController();
-
         fpvWidget.setCameraIndexListener((cameraIndex, lensIndex) -> cameraWidgetKeyIndexUpdated(fpvWidget.getCameraKeyIndex(), fpvWidget.getLensKeyIndex()));
         updateSecondaryVideoVisibility();
+
+        //-CUSTOM CODE-
+        //initialize button that starts virtual sticks to control the drone
+        startVSBtn = (Button) parentView.findViewById(R.id.virtual_sticks_button);
+        startVSBtn.setOnClickListener(this);
+
+        //initialize button that stops the virtual sticks and puts the drone to halt
+        stopBtn = (Button) parentView.findViewById(R.id.stop_button);
+        stopBtn.setOnClickListener(this);
+
+        //initialize button that starts autonomous navigation by updating the drone controls accordingly to reach the target location.
+        calcBtn = (Button) parentView.findViewById(R.id.start_calculations_button);
+        calcBtn.setOnClickListener(this);
+
+        //drone flight controller that allows to retrieve the current status of the drone and allows to control the drone
+        flightController = ((Aircraft) DJISDKManager.getInstance().getProduct()).getFlightController();
     }
 
 
@@ -148,38 +150,78 @@ public class CompleteWidgetActivity extends Activity implements View.OnClickList
     public void onClick(View view) {
         switch (view.getId()) {
             case R.id.virtual_sticks_button:
+                //enables virtual sticks
                 enableVirtualSticks();
                 break;
             case R.id.stop_button:
+                //stops virtual sticks
                 stopVirtualSticks();
                 break;
             case R.id.start_calculations_button:
+                //starts calculations that steer the drone towards predefined target location
+
+                //sets the vertical throttle value to the target locations height,
+                //which makes the drone reach the target location's altitude.
                 verticalThrottle = targetLocation.getAltitude();
+
+                //creates a pool of 2 methods that will be executed
                 scheduleTaskExecutor = Executors.newScheduledThreadPool(2);
+
+                //starts calculations
                 startCalculations();
+
+                //starts uploading the calculated drone behaviour of roll, pitch, yaw and vertical throttle to the drone for execution
                 startUploadVirtualSticksData();
                 break;
         }
     }
 
+    //invokes a method that calculates the drone behaviour to reach the target location
     private void startCalculations() {
+        //starts a task executor (separate thread) that executes the calculations method every 0.8 seconds.
         scheduleTaskExecutor.scheduleAtFixedRate(this::calculations, 0, 800, TimeUnit.MILLISECONDS);
     }
 
+    /*
+    calculates the drone behaviour to reach the target location:
+        1. gets the current drone location
+        2. calculates the bearing angle between the current drone location and the predefined target location
+            (bearing angle informs at which angle relative to North should the drone turn to face-forward the target location)
+        3. calculates the current distance between the current drone location and the predefined target location
+            (allows us to know how far are we from the target location, and if we have already reached it)
+        4. calculates the difference in altitudes (heights) of the current drone location and the predefined target location
+            (allows the drone to know which height it should go to be in the target location's height)
+        5. depending on the information above, updates the yaw and roll control values (global variables) to
+        the according value that steers the drone towards the target location
+            5.1 the drone adjust its current hover altitude to match the target locations altitude (see line 165)
+            5.2 the drone rotates along its yaw axis to face its front towards the target location
+            5.3 the drone moves forward along the roll axis at the speed of 5 meters per second if the
+            target location is 50 meters (or further) away from the drone's current location
+            5.4 the drone moves forward 2 meters per second if the target location is in the distance between 50 meters and 3 meters
+            5.5 the drone halts its forward movement if the target location is in the distance of 3 meters or lower. The drone
+            also turns towards the North (since it's yaw value is set to 0 degrees)
 
+    this method is executed every 0.8 seconds, hence the drone's behaviour is updated every 0.8 seconds.
+    */
     private void calculations() {
+        //current drone location as an object (contains values of latitude (degrees), longitude (degrees), and altitude (meters))
         LocationCoordinate3D droneCurrentLocation = new LocationCoordinate3D(flightController.getState().getAircraftLocation().getLatitude(),
                 flightController.getState().getAircraftLocation().getLongitude(),
                 flightController.getState().getAircraftLocation().getAltitude());
 
+        //bearing angle (degrees)
         double bearing = bearing(droneCurrentLocation, targetLocation);
         if(bearing > 180) {
             bearing = -360 + bearing;
         }
 
+        //distance (meters) between current drone location and target location
         double distance = distance(droneCurrentLocation, targetLocation);
+
+        //altitude difference between current drone location and target location (meters)
         double VSAltitudeDifference = Math.abs(Math.round(droneCurrentLocation.getAltitude())-targetLocation.getAltitude());
 
+        //drone conditional behaviour
         if(VSAltitudeDifference>0.5){
             yaw = (float) bearing;
         } else if (Math.abs(flightController.getState().getAttitude().yaw-bearing)>5){
@@ -197,6 +239,8 @@ public class CompleteWidgetActivity extends Activity implements View.OnClickList
         }
     }
 
+    //turns off virtual sticks to halt the drone's movements. This action allows the user to take over the drone's
+    //controls via the remote controller.
     private void stopVirtualSticks(){
         if(scheduleTaskExecutor != null){
             scheduleTaskExecutor.shutdown();
@@ -211,11 +255,16 @@ public class CompleteWidgetActivity extends Activity implements View.OnClickList
         });
     }
 
+    //invokes a method that uploads the drone's behaviour to the drone for execution.
     private void startUploadVirtualSticksData() {
+        //starts a task executor (separate thread) that executes the uploadVSData (VS = Virtual Sticks) method every 0.06 seconds.
         scheduleTaskExecutor.scheduleAtFixedRate(this::uploadVSData, 0, 60, TimeUnit.MILLISECONDS);
     }
 
+    //uploads the drone behaviour data to the drone for execution
     private void uploadVSData(){
+        //the pitch, roll, yaw and vertical throttle data is uploaded via this method to the drone. The drone executes
+        //the behaviour while the virtual sticks are on.
         flightController.sendVirtualStickFlightControlData(new FlightControlData(pitch, roll, yaw, verticalThrottle), djiError -> {
             if (djiError != null) {
                 showToast(djiError.getDescription());
@@ -223,13 +272,39 @@ public class CompleteWidgetActivity extends Activity implements View.OnClickList
         });
     }
 
+    //method that enable virtual sticks and lets control the drone with custom code. While the virtual
+    //sticks are on, the user is unable to control the drone via the remote controller. Only turning off the virtual
+    //sticks allows the user to control the drone. This method enables virtual sticks with additional important settings,
+    //which define what type of data we provide to the drone for it to fly autonomously.
     private void enableVirtualSticks() {
+        //enable virtual sticks, and upon success, setting additional parameters.
         flightController.setVirtualStickModeEnabled(true, djiError -> {
             if(djiError == null){
+                //advanced mode enables the drone to resist wind and other external impact
+                //with advanced DJI technology
                 flightController.setVirtualStickAdvancedModeEnabled(true);
+
+                //sets how we want to control the roll and pitch of the drone. In this case,
+                //we set that the drone will go by velocity, which allows us to set the velocity along the
+                //roll and/or pitch axes. For example, by setting the roll value to 3 and sending it to
+                //the drone for execution, the drone will move forward along the roll axis at 3 m/s. It would move
+                //backward along the roll axis if we set roll = -3. The same goes with the pitch value.
                 flightController.setRollPitchControlMode(RollPitchControlMode.VELOCITY);
+
+                //sets how we want to control the drone's direction/rotation along the yaw axis. This allows
+                //us to turn the drone's body towards the target location by indicating the calculated bearing angle.
+                //For example, 57 degrees would turn the drone's front 57 degrees clockwise relative to the North, 0 degrees
+                //would make the drone face towards the North, and -57 degrees would turn the drone counterclockwise relative
+                //to North. Thud, the range at which the drone can turn is [-180;180] degrees.
                 flightController.setYawControlMode(YawControlMode.ANGLE);
+
+                //sets how we want to control the drone's altitude. In this case, we allow the drone to automatically
+                //reach the allocated height. For example, if we set the vertical throttle to 7, the drone will fly to 7 meters height,
+                //from the place it took off.
                 flightController.setVerticalControlMode(VerticalControlMode.POSITION);
+
+                //sets the perspective from which we want to control the drone. In this case, we want to control the drone from its
+                //POV (Point Of View) a.k.a. body.
                 flightController.setRollPitchCoordinateSystem(FlightCoordinateSystem.BODY);
                 showToast("VS Sticks Enabled!");
             } else {
@@ -238,6 +313,7 @@ public class CompleteWidgetActivity extends Activity implements View.OnClickList
         });
     }
 
+    //formula that calculates the bearing angle between two coordinate points
     private static double bearing(LocationCoordinate3D current, LocationCoordinate3D target) {
         double lat1 = current.getLatitude();
         double lon1 = current.getLongitude();
@@ -264,6 +340,7 @@ public class CompleteWidgetActivity extends Activity implements View.OnClickList
         return tc1*180 / Math.PI;
     }
 
+    //formula that calculates the distance between two coordinate points
     public static double distance(LocationCoordinate3D current, LocationCoordinate3D target) {
 
         double lat1 = current.getLatitude();
@@ -289,6 +366,9 @@ public class CompleteWidgetActivity extends Activity implements View.OnClickList
 
         return Math.sqrt(distance);
     }
+
+    //EVERYTHING BELLOW IS DEVELOPED BY DJI FOR DEMO PURPOSES. THE CODE BELLOW ACTS AS A FOUNDATION THAT WE
+    //BUILD OUR CUSTOM IMPLEMENTATION ON TOP OF.
 
     public void showToast(final String message) {
         Handler handler = new Handler(Looper.getMainLooper());
