@@ -42,7 +42,7 @@ If you want to execute the autonomous navigation with the drone, you must:
 - Turn on the drone and the remote controller;
 - Launch the application;
 - Click on "Complete Demo of Default UI Widgets" button;
-- Click on "ENABLE VS" button to enable the Virtual Sticks that will control the drone. **Note:** You will NOT be able to control the drone with the remote controller unless you press the "STOP" button. Always stay alert if something goes wrong, you will **ONLY** be able to **TAKE CONTROL** of the drone after pressing the **"STOP" button**;
-- Click on "START MISSION" button to start the drone's autonomous navigation towards the target location. **Note:** You will **NOT BE ABLE TO CONTROL** the drone with the remote controller unless you press the **"STOP" button**.
+- Click on "ENABLE VS" button to enable the Virtual Sticks that will control the drone. **Note:** You will **NOT** be able to control the drone with the remote controller unless you press the **"STOP" button**;
+- Click on "START MISSION" button to start the drone's autonomous navigation towards the target location. **Note:** You will **NOT BE ABLE TO CONTROL** the drone with the remote controller unless you press the **"STOP" button**. Always stay alert if something goes wrong, you will **ONLY** be able to **TAKE CONTROL** of the drone after pressing the **"STOP" button** (can't stress this enough. Once almost went into a tree and nearly crashed into a river. Almost.).
 
 **_ATTENTION ONCE MORE_** - In case of emergencies (if the drone does not behave how you want it to), press the **"STOP" button** to **halt the drone's behavior** and **take over the controls** via the remote controller.
